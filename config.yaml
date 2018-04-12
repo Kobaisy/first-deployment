@@ -1,0 +1,420 @@
+---
+imports:
+  - path: https://storage.googleapis.com/rs-gdm-stl-master/iam_service_account_v1/iam_service_account_v1.py
+    name: iam_service_account_v1.py
+  - path: https://storage.googleapis.com/rs-gdm-stl-master/gce_instancetemplate_v1/gce_instancetemplate_v1.py
+    name: gce_instancetemplate_v1.py
+  - path: https://storage.googleapis.com/rs-gdm-stl-master/cloudsql_instance_v1/cloudsql_instance_v1.py
+    name: cloudsql_instance_v1.py
+  - path: https://storage.googleapis.com/rs-gdm-stl-master/address_v1/address_v1.py
+    name: address_v1.py
+  - path: https://storage.googleapis.com/rs-gdm-stl-master/constants_v1/constants_v1.py
+    name: constants_v1.py
+  - path: https://storage.googleapis.com/rs-gdm-stl-master/gce_instance_v2/gce_instance_v2.py
+    name: gce_instance_v2.py
+  - path: https://storage.googleapis.com/rs-gdm-stl-master/ssl_certificate_v1/ssl_certificate_v1.py
+    name: ssl_certificate_v1.py
+  - path: https://storage.googleapis.com/rs-gdm-stl-master/httphealthcheck_v1/httphealthcheck_v1.py
+    name: httphealthcheck_v1.py
+  - path: https://storage.googleapis.com/rs-gdm-stl-master/httploadbalancer_v1/httploadbalancer_v1.py
+    name: httploadbalancer_v1.py
+  - path: https://storage.googleapis.com/rs-gdm-stl-master/backendservice_v1/backendservice_v1.py
+    name: backendservice_v1.py
+  - path: star-binnys-com-ca.pem
+  - path: star-binnys-com-key.pem
+  - path: bucket_v1.py
+  - path: cloudsql_instance_v1.py
+  - path: firewall_rule_v1.py
+
+##############################################################################
+  
+  resources:
+    - type: network_v1
+      name: first-deployment-network
+      properties:
+        autoCreateSubnetworks: False
+        network_description: 'first-deployment-Shared Network'
+
+    - type: subnetwork_v1
+      name: &Production_Web
+      properties:
+        network: $(ref.first-deployment-network.selfLink)
+        ipCidrRange: &NETWORK_PROD_WEB 192.168.1.0/24
+        region: &REGION us-central1
+   
+    - type: subnetwork_v1
+      name: &Production_Data 
+      properties:
+        network: $(ref.first-deployment-network.selfLink)
+        ipCidrRange: &NETWORK_PROD_DATA 192.168.2.0/24
+        region: *REGION 
+
+    - type: subnetwork_v1
+      name: &Production_Shared
+      properties:
+        network: $(ref.first-deployment-network.selfLink)
+        ipCidrRange: &NETWORK_PROD_SHARED 192.168.3.0/24
+        region: *REGION 
+
+    - type: subnetwork_v1
+      name: &Staging
+      properties:
+        network: $(ref.first-deployment-network.selfLink)
+        ipCidrRange: &NETWORK_STAGING 192.168.4.0/24
+        region: *REGION    
+
+    - type: subnetwork_v1
+      name: &Development
+      properties:
+        network: $(ref.first-deployment-network.selfLink)
+        ipCidrRange: &NETWORK_DEV 192.168.5.0/24
+        region: *REGION     
+
+#Defining IGM 
+  - type: gce_instancetemplate_v1.py
+    name: Magento 
+    properties:
+      machineType: n1-standard-4
+      image_url: "projects/centos-cloud/global/images/family/centos-7"
+      networkInterfaces:
+        - accessConfigs:
+            - {name: external-nat, type: ONE_TO_ONE_NAT}
+      disks:
+        - deviceName: 'boot'
+        - boot: true
+        - autoDelete: false
+
+    - type: igm_v1
+      name: Mgento
+      properties:
+        region: *REGION
+        targetSize: 1
+        instanceTemplate:
+
+#Autoscale group for MIG  
+    - type: autoscaler_v1.py
+      name: IGM-Magento
+      properties:
+        region: *Region
+        autoscalingPolicy.minNumReplicas: 1
+        autoscalingPolicy.maxNumReplicas: 4
+        target: $(ref.Magento.safeLink)
+
+#Load balancer
+    - type: httploadbalancer_v1.py
+      name: httploadbalancer
+      backendProperties:
+        backends:
+          - group: $(ref.IGM-Magento.safeLink)
+      healthCheckProperties:
+        tls: false 
+        port: 80
+
+#Instances:
+    - type: gce_instance_v2.py
+      name: Varnish
+      properties:
+      disks:
+        - deviceName: 'boot'
+          boot: true
+          autoDelete: false
+          initializeParams:
+            sourceImage: projects/centos-cloud/us-central1-a/images/centos-7
+            diskSizeGb: 60
+        machineType: n1-standard-2
+        networkInterfaces:
+          - network: *NETWORK 
+            subnetworks: *Production Web
+            
+
+    - type: gce_instance_v2.py
+      name: NAT Gateway
+      properties: 
+        networkInterfaces:
+          - network: *NETWORK 
+            subnetworks: *Production_Web
+        disks:
+            - deviceName: 'boot'
+              boot: true
+              sizeGb: 60
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-Standard             
+          machineType: zones/us-central1-a/machineTypes/n1-standard-4
+          disks[].autoDelete: False
+
+    - type: gce_instance_v2.py
+      name: NAT Gateway
+      properties: 
+        networkInterfaces:
+          - network: *NETWORK 
+            subnetworks: *Production_Web
+        disks:
+            - deviceName: 'boot'
+              boot: true 
+              sizeGb: 60
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-Standard             
+          machineType: zones/us-central1-b/machineTypes/n1-standard-4
+          disks[].autoDelete: False
+
+            
+    - type: gce_instance_v2.py
+      name: Development
+      properties: 
+        networkInterfaces:
+          - network: *NETWORK 
+            subnetworks: *Development
+          - disks: 
+            - deviceName: 'boot'
+              boot: true 
+              sizeGb: 60
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd              
+          machineType: zones/us-central1-b/machineTypes/n1-standard-4
+          disks[].autoDelete: False
+            - deviceName: 'Data_1'
+              sizeGb: 100
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd           
+          machineType: zones/us-central1-b/machineTypes/n1-standard-4
+          disks[].autoDelete: False
+            - deviceName: 'Data_2'
+              sizeGb: 100
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd             
+          machineType: zones/us-central1-b/machineTypes/n1-standard-4
+          disks[].autoDelete: False
+
+    - type: gce_instance_v2.py
+      name: Staging
+      properties:
+        networkInterfaces:
+          - network: *NETWORK 
+            subnetworks: *Staging
+          disks:
+            - deviceName: 'boot'
+              boot: true 
+              sizeGb: 60
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd             
+          machineType: zones/us-central1-b/machineTypes/n1-highmem-2
+          disks[].autoDelete: False
+            - deviceName: 'Data_1'
+              sizeGb: 100
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd             
+          machineType: zones/us-central1-b/machineTypes/n1-highmem-2
+          disks[].autoDelete: False
+            - deviceName: 'Data_2'
+              sizeGb: 100
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd             
+          machineType: zones/us-central1-b/machineTypes/n1-highmem-2
+          disks[].autoDelete: False
+
+    - type: gce_instance_v2.py
+      name: Bastion
+      properties:
+        networkInterfaces:
+          - network: *NETWORK 
+            subnetworks: *Production_Shared       
+        disks:
+            - deviceName: 'boot'
+              boot: true 
+              sizeGb: 60
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-standard          
+          machineType: zones/us-central1-b/machineTypes/n1-standard-1
+          disks[].autoDelete: False
+
+    - type: gce_instance_v2.py
+      name: Jenkins
+      properties:
+          - network: *NETWORK 
+            subnetworks: *Production_Shared
+        disks:
+            - deviceName: 'boot'
+              boot: true 
+              sizeGb: 60
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd        
+          machineType: zones/us-central1-b/machineTypes/n1-highmem-4
+          disks[].autoDelete: False
+        disks:
+            - deviceName: 'Data'
+              boot: true 
+              sizeGb: 250
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd          
+          machineType: zones/us-central1-b/machineTypes/n1-highmem-4
+          disks[].autoDelete: False
+
+    - type: gce_instance_v2.py
+      name: NFS 
+      properties:
+          - network: *NETWORK 
+            subnetworks: *NETWORK_PROD_DATA
+        disks:
+            - deviceName: 'boot'
+              boot: true 
+              sizeGb: 60
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd        
+          machineType: zones/us-central1-b/machineTypes/n1-standard-2
+          disks[].autoDelete: False
+            - deviceName: 'Data'
+              boot: true 
+              sizeGb: 500
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd        
+          machineType: zones/us-central1-b/machineTypes/n1-standard-2
+          disks[].autoDelete: False
+
+    - type: gce_instance_v2.py
+      name: NFS 
+      properties:
+          - network: *NETWORK 
+            subnetworks: *NETWORK_PROD_DATA
+        disks:
+            - deviceName: 'boot'
+              boot: true 
+              sizeGb: 60
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd        
+          machineType: zones/us-central1-b/machineTypes/n1-highcpu-4
+          disks[].autoDelete: False
+          
+    - type: gce_instance_v2.py
+      name: NFS 
+      properties:
+          - network: *NETWORK 
+            subnetworks: *NETWORK_PROD_DATA
+        disks:
+            - deviceName: 'boot'
+              boot: true 
+              sizeGb: 60
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-b/diskTypes/pd-ssd        
+          machineType: zones/us-central1-b/machineTypes/n1-highcpu-4
+          disks[].autoDelete: False
+          
+# Instances un-managed:
+    - type: compute.v1.instance
+      name: Magento_Admin_boot
+      properties:
+          disks:
+            - name: 'boot'
+              boot: true
+              sizeGb: 60
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd             
+          machineType: zones/us-central1-a/machineTypes/n1-standard-4
+          tag: *NETWORK_PROD_WEB
+          disks[].autoDelete: False
+          
+    - type: compute.v1.instance
+      name: Magento_Admin_Data_1
+      properties:
+          disk:
+            - deviceName: 'Data_1'
+              sizeGb: 100
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd             
+          machineType: zones/us-central1-a/machineTypes/n1-standard-4
+          tag: *NETWORK_PROD_WEB
+          disks[].autoDelete: False          
+
+    - type: compute.v1.instance
+      name: Magento_Admin_Data_2
+      properties:
+          disk:
+            - deviceName: 'Data_2'
+              sizeGb: 100
+              sourceImage: projects/centos-cloud/global/images/family/centos-7
+              type: project/zones/us-central1-a/diskTypes/pd-ssd             
+          machineType: zones/us-central1-a/machineTypes/n1-standard-4
+          tag: *NETWORK_PROD_WEB
+          disks[].autoDelete: False
+
+
+# Storage bucket ######################################
+    - type: bucket_v1.py
+      name: Backup
+      properties:
+         location: US
+         storageClass: MULTI_REGIONAL
+
+# Cloud SQL ############################################
+
+    - type: cloudsql_instance_v1.py
+      name: Production 
+      properties:
+         region: us-central
+         settings:
+           tier: db-n1-standard-2
+           dataDiskType: PD_HDD
+           dataDiskSizeGb: 250
+           locationPreference:
+             zone: us-central1-a
+         databaseVersion: MYSQL_5_6
+         backendType: SECOND_GEN  
+         instanceType: CLOUD_SQL_INSTANCE
+
+  - type: cloudsql_instance_v1.py
+    name: cloudsql-v1-test-readreplica
+    properties:
+      region: us-central1
+      masterInstanceName: $(ref.Production.name)
+      databaseVersion: MYSQL_5_6
+      settings:
+        tier: db-n1-standard-1
+        replicationType: SYNCHRONOUS
+
+
+# Firewall rules #######################################
+    - type: firewall_rule_v1.py
+      name: Production_Shared
+      properties:
+        network: *NETWORK
+        direction: INGRESS
+        targetTags:
+        - all-internal
+        allowed:
+          - IPProtocol: tcp
+            ports:
+            - 80
+            - 22
+
+    - type: firewall_rule_v1.py
+      name: Bastion
+      properties:
+        network: *NETWORK
+        direction: INGRESS
+        targetTags:
+        - bastion-access
+        allowed:
+          - IPProtocol: tcp
+            ports:
+            - 22
+
+    - type: firewall_rule_v1.py
+      name: CLB 
+      properties:
+        network: *NETWORK
+        direction: INGRESS
+        targetTags:
+        - http 
+        allowed:
+          - IPProtocol: tcp
+            ports:
+            - 80
+
+    - type: firewall_rule_v1.py
+      name: All internal 
+      properties:
+        network: *NETWORK
+        direction: INGRESS
+        targetTags:
+        - nat-gw
+        allowed:
+          - IPProtocol: tcp
