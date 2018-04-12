@@ -2,11 +2,11 @@
 imports:
   - path: https://storage.googleapis.com/rs-gdm-stl-master/iam_service_account_v1/iam_service_account_v1.py
     name: iam_service_account_v1.py
-  - path: https://storage.googleapis.com/rs-gdm-stl-master/gce_instancetemplate_v1/gce_instancetemplate_v1.py
-    name: gce_instancetemplate_v1.py
+  - path: https://cloud.google.com/compute/docs/reference/rest/v1/instanceTemplates 
+    name: compute.v1.instanceTemplate
   - path: https://storage.googleapis.com/rs-gdm-stl-master/cloudsql_instance_v1/cloudsql_instance_v1.py
     name: cloudsql_instance_v1.py
-  - path: https://storage.googleapis.com/rs-gdm-stl-master/address_v1/address_v1.py
+  - path: https://cloud.google.com/compute/docs/reference/rest/v1/addresses 
     name: address_v1.py
   - path: https://storage.googleapis.com/rs-gdm-stl-master/constants_v1/constants_v1.py
     name: constants_v1.py
@@ -14,60 +14,73 @@ imports:
     name: gce_instance_v2.py
   - path: https://storage.googleapis.com/rs-gdm-stl-master/ssl_certificate_v1/ssl_certificate_v1.py
     name: ssl_certificate_v1.py
-  - path: https://storage.googleapis.com/rs-gdm-stl-master/httphealthcheck_v1/httphealthcheck_v1.py
+  - path: https://cloud.google.com/compute/docs/reference/rest/v1/healthChecks
     name: httphealthcheck_v1.py
-  - path: https://storage.googleapis.com/rs-gdm-stl-master/httploadbalancer_v1/httploadbalancer_v1.py
-    name: httploadbalancer_v1.py
-  - path: https://storage.googleapis.com/rs-gdm-stl-master/backendservice_v1/backendservice_v1.py
+#  - path: https://storage.googleapis.com/rs-gdm-stl-master/httploadbalancer_v1/httploadbalancer_v1.py
+#    name: httploadbalancer_v1.py
+  - path: https://cloud.google.com/compute/docs/reference/rest/v1/backendServices
     name: backendservice_v1.py
   - path: star-binnys-com-ca.pem
   - path: star-binnys-com-key.pem
   - path: bucket_v1.py
-  - path: cloudsql_instance_v1.py
-  - path: firewall_rule_v1.py
-
+#  - path: cloudsql_instance_v1.py
+  - path: https://storage.cloud.google.com/rs-gdm-stl-master/firewall_rule_v1/firewall_rule_v1.py
+  - name: firewall_rule_v1.py
+  - path: https://cloud.google.com/compute/docs/reference/rest/v1/networks
+  - name: compute.v1.network
+  - path: https://cloud.google.com/compute/docs/reference/rest/v1/subnetworks
+  - name: compute.v1.subnetwork
 ##############################################################################
   
   resources:
-    - type: network_v1
+    - type: constants_v1.py
+      name: contstants
+      properties:
+          prod_web_subnet: &NETWORK_PROD_WEB 192.168.1.0/24
+          prod_data-subnet: &NETWORK_PROD_DATA 192.168.2.0/24
+          prod_shared_subnet: &NETWORK_PROD_SHARED 192.168.3.0/24
+          staging_subnet: &NETWORK_STAGING 192.168.4.0/24
+          development_subnet: &NETWORK_DEV 192.168.5.0/24
+
+    - type: compute.v1.network
       name: first-deployment-network
       properties:
         autoCreateSubnetworks: False
         network_description: 'first-deployment-Shared Network'
-
-    - type: subnetwork_v1
+       
+    - type: compute.v1.subnetwork
       name: &Production_Web
       properties:
         network: $(ref.first-deployment-network.selfLink)
-        ipCidrRange: &NETWORK_PROD_WEB 192.168.1.0/24
+        ipCidrRange: *NETWORK_PROD_WEB
         region: &REGION us-central1
    
-    - type: subnetwork_v1
+    - type: compute.v1.subnetwork
       name: &Production_Data 
       properties:
         network: $(ref.first-deployment-network.selfLink)
-        ipCidrRange: &NETWORK_PROD_DATA 192.168.2.0/24
+        ipCidrRange: *NETWORK_PROD_DATA
         region: *REGION 
 
-    - type: subnetwork_v1
+    - type: compute.v1.subnetwork
       name: &Production_Shared
       properties:
         network: $(ref.first-deployment-network.selfLink)
-        ipCidrRange: &NETWORK_PROD_SHARED 192.168.3.0/24
+        ipCidrRange: *NETWORK_PROD_SHARED
         region: *REGION 
 
-    - type: subnetwork_v1
+    - type: compute.v1.subnetwork
       name: &Staging
       properties:
         network: $(ref.first-deployment-network.selfLink)
-        ipCidrRange: &NETWORK_STAGING 192.168.4.0/24
+        ipCidrRange: *NETWORK_STAGING
         region: *REGION    
 
-    - type: subnetwork_v1
+    - type: compute.v1.subnetwork
       name: &Development
       properties:
         network: $(ref.first-deployment-network.selfLink)
-        ipCidrRange: &NETWORK_DEV 192.168.5.0/24
+        ipCidrRange: *NETWORK_DEV
         region: *REGION     
 
 #Defining IGM 
@@ -78,18 +91,20 @@ imports:
       image_url: "projects/centos-cloud/global/images/family/centos-7"
       networkInterfaces:
         - accessConfigs:
-            - {name: external-nat, type: ONE_TO_ONE_NAT}
+            - name: external-nat 
+            - type: ONE_TO_ONE_NAT
       disks:
         - deviceName: 'boot'
         - boot: true
         - autoDelete: false
-
-    - type: igm_v1
-      name: Mgento
-      properties:
+        - sourceImage: "projects/centos-cloud/us-central1-a/images/centos-7"
+  
+  - type: igm_v1
+    name: magento-igm
+    properties:
         region: *REGION
         targetSize: 1
-        instanceTemplate:
+        instanceTemplate: $(ref.Magento.selfLink)
 
 #Autoscale group for MIG  
     - type: autoscaler_v1.py
@@ -98,14 +113,14 @@ imports:
         region: *Region
         autoscalingPolicy.minNumReplicas: 1
         autoscalingPolicy.maxNumReplicas: 4
-        target: $(ref.Magento.safeLink)
+        target: $(ref.magento-igm.selfLink)
 
 #Load balancer
     - type: httploadbalancer_v1.py
       name: httploadbalancer
       backendProperties:
         backends:
-          - group: $(ref.IGM-Magento.safeLink)
+          - group: $(ref.magento-igm.safeLink)
       healthCheckProperties:
         tls: false 
         port: 80
@@ -361,7 +376,7 @@ imports:
          instanceType: CLOUD_SQL_INSTANCE
 
   - type: cloudsql_instance_v1.py
-    name: cloudsql-v1-test-readreplica
+    name: Binny-CloudSQL-read_replica
     properties:
       region: us-central1
       masterInstanceName: $(ref.Production.name)
